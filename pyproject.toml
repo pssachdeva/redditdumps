@@ -1,0 +1,48 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "redditdumps"
+version = "0.1.0"
+description = "Lightweight utilities for processing Reddit data dumps in ZST format"
+readme = "README.md"
+requires-python = ">=3.12"
+license = "MIT"
+authors = [
+    { name = "Your Name", email = "you@example.com" }
+]
+keywords = ["reddit", "pushshift", "zstandard", "data-processing"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+]
+dependencies = [
+    "pandas>=1.5.0",
+    "zstandard>=0.21.0",
+    "tqdm>=4.64.0",
+    "typer>=0.9.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+]
+
+[project.scripts]
+redditdumps = "redditdumps.cli:app"
+
+[project.urls]
+Homepage = "https://github.com/pssachdeva/redditdumps"
+Repository = "https://github.com/pssachdeva/redditdumps"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/redditdumps"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
