@@ -134,6 +134,7 @@ def read_zst(
                     item = {k: item.get(k) for k in columns}
 
                 matched.append(item)
+                pbar.set_postfix(hits=len(matched))
 
             pbar.close()
 
@@ -143,6 +144,8 @@ def read_zst(
 def _matches_filters(item: dict, filters: dict[str, Any]) -> bool:
     """
     Check if an item matches all filter criteria.
+
+    String comparisons are case-insensitive by default.
 
     Parameters
     ----------
@@ -162,20 +165,39 @@ def _matches_filters(item: dict, filters: dict[str, Any]) -> bool:
     --------
     >>> _matches_filters({"subreddit": "science", "score": 10}, {"subreddit": "science"})
     True
-    >>> _matches_filters({"subreddit": "science"}, {"subreddit": ["science", "news"]})
+    >>> _matches_filters({"subreddit": "Science"}, {"subreddit": "science"})
+    True
+    >>> _matches_filters({"subreddit": "science"}, {"subreddit": ["Science", "News"]})
     True
     >>> _matches_filters({"subreddit": "pics"}, {"subreddit": "science"})
     False
     """
     for key, value in filters.items():
+        item_value = item.get(key)
+
         if isinstance(value, (list, tuple, set)):
             # Multiple values use OR logic (match any)
-            if item.get(key) not in value:
+            if not _value_matches_any(item_value, value):
                 return False
         else:
-            if item.get(key) != value:
+            if not _values_equal(item_value, value):
                 return False
     return True
+
+
+def _values_equal(item_value: Any, filter_value: Any) -> bool:
+    """Compare two values, case-insensitive for strings."""
+    if isinstance(item_value, str) and isinstance(filter_value, str):
+        return item_value.lower() == filter_value.lower()
+    return item_value == filter_value
+
+
+def _value_matches_any(item_value: Any, filter_values: list | tuple | set) -> bool:
+    """Check if item_value matches any of the filter values, case-insensitive for strings."""
+    for fv in filter_values:
+        if _values_equal(item_value, fv):
+            return True
+    return False
 
 
 def inspect_schema(

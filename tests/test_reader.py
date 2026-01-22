@@ -87,6 +87,19 @@ class TestReadZst:
         assert len(df) == 2
         assert all(df["author"] == "user1")
 
+    def test_read_filter_case_insensitive(self, sample_zst_file):
+        # Filter with different case than data ("python" in data, "Python" in filter)
+        df = rd.read_zst(sample_zst_file, subreddit="Python", progress=False)
+        assert len(df) == 2
+        assert all(df["subreddit"] == "python")
+
+    def test_read_multi_filter_case_insensitive(self, sample_zst_file):
+        # Filter with mixed case in list
+        df = rd.read_zst(
+            sample_zst_file, subreddit=["PYTHON", "Science"], progress=False
+        )
+        assert len(df) == 3
+
 
 class TestInspectSchema:
     def test_inspect_schema(self, sample_zst_file):

@@ -23,7 +23,7 @@ def read(
     ],
     subreddit: Annotated[
         Optional[str],
-        typer.Option("--subreddit", "-s", help="Filter by subreddit"),
+        typer.Option("--subreddit", "-s", help="Filter by subreddit (comma-separated for multiple)"),
     ] = None,
     columns: Annotated[
         Optional[str],
@@ -49,7 +49,8 @@ def read(
     # Build filter kwargs
     filters = {}
     if subreddit:
-        filters["subreddit"] = subreddit
+        subs = [s.strip() for s in subreddit.split(",")]
+        filters["subreddit"] = subs if len(subs) > 1 else subs[0]
 
     # Read the file
     df = read_zst(
