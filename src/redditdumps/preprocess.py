@@ -13,6 +13,7 @@ def preprocess(
     text_col: str | None = None,
     parse_dates: bool = True,
     drop_deleted: bool = True,
+    drop_moderator: bool = False,
     clean_text: bool = True,
 ) -> pd.DataFrame:
     """
@@ -31,6 +32,9 @@ def preprocess(
         Convert created_utc to datetime.
     drop_deleted : bool, default True
         Remove rows with deleted/removed authors or content.
+    drop_moderator : bool, default False
+        Remove moderator/AutoModerator posts (distinguished, stickied, or
+        username/flair containing "moderator").
     clean_text : bool, default True
         Clean text content (unescape HTML, normalize whitespace).
 
@@ -60,6 +64,7 @@ def preprocess(
             text_col=text_col,
             parse_dates=parse_dates,
             drop_deleted=drop_deleted,
+            drop_moderator=drop_moderator,
             clean_text=clean_text,
         )
     else:
@@ -68,6 +73,7 @@ def preprocess(
             text_col=text_col,
             parse_dates=parse_dates,
             drop_deleted=drop_deleted,
+            drop_moderator=drop_moderator,
             clean_text=clean_text,
         )
 
@@ -90,6 +96,7 @@ def _preprocess_submissions(
     text_col: str,
     parse_dates: bool,
     drop_deleted: bool,
+    drop_moderator: bool,
     clean_text: bool,
 ) -> pd.DataFrame:
     """Preprocess submission data."""
@@ -100,6 +107,9 @@ def _preprocess_submissions(
 
     if drop_deleted:
         df = _drop_deleted(df, text_col=text_col)
+
+    if drop_moderator:
+        df = _drop_moderator(df)
 
     if clean_text:
         df = _clean_text(df, text_col=text_col)
@@ -114,6 +124,7 @@ def _preprocess_comments(
     text_col: str,
     parse_dates: bool,
     drop_deleted: bool,
+    drop_moderator: bool,
     clean_text: bool,
 ) -> pd.DataFrame:
     """Preprocess comment data."""
@@ -124,6 +135,9 @@ def _preprocess_comments(
 
     if drop_deleted:
         df = _drop_deleted(df, text_col=text_col)
+
+    if drop_moderator:
+        df = _drop_moderator(df)
 
     if clean_text:
         df = _clean_text(df, text_col=text_col)
@@ -146,6 +160,38 @@ def _drop_deleted(df: pd.DataFrame, text_col: str) -> pd.DataFrame:
     if text_col in df.columns:
         df = df[~df[text_col].isin(["[deleted]", "[removed]"])]
         df = df[df[text_col].notna()]
+
+    return df
+
+
+def _drop_moderator(df: pd.DataFrame) -> pd.DataFrame:
+    """Remove moderator and AutoModerator posts."""
+    # 1. Distinguished field (official mod/admin designation)
+    if "distinguished" in df.columns:
+        df = df[
+            (df["distinguished"].isna())
+            | (~df["distinguished"].isin(["moderator", "admin"]))
+        ]
+
+    # 2. Exact AutoModerator username match
+    if "author" in df.columns:
+        df = df[df["author"] != "AutoModerator"]
+
+    # 3. Stickied posts
+    if "stickied" in df.columns:
+        df = df[df["stickied"] != True]  # noqa: E712
+
+    # 4. Username or flair containing "moderator" (case-insensitive)
+    if "author" in df.columns:
+        df = df[~df["author"].str.contains("moderator", case=False, na=False)]
+
+    if "author_flair_text" in df.columns:
+        df = df[~df["author_flair_text"].str.contains("moderator", case=False, na=False)]
+
+    if "author_flair_css_class" in df.columns:
+        df = df[
+            ~df["author_flair_css_class"].str.contains("moderator", case=False, na=False)
+        ]
 
     return df
 
