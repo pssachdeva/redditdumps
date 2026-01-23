@@ -139,12 +139,13 @@ def _parse_dates(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _drop_deleted(df: pd.DataFrame, text_col: str) -> pd.DataFrame:
-    """Remove rows with deleted/removed authors or content."""
+    """Remove rows with deleted/removed authors or missing content."""
     if "author" in df.columns:
         df = df[~df["author"].isin(["[deleted]", "[removed]"])]
 
     if text_col in df.columns:
         df = df[~df[text_col].isin(["[deleted]", "[removed]"])]
+        df = df[df[text_col].notna()]
 
     return df
 
