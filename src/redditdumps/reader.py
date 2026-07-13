@@ -1,12 +1,29 @@
 import io
 import json
 from collections import Counter
+from collections.abc import Callable, Iterator, Mapping
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import pandas as pd
 import zstandard as zstd
 from tqdm import tqdm
+
+
+Record = dict[str, Any]
+RecordFilter = Callable[[Mapping[str, Any]], bool]
+
+
+@dataclass
+class ReadStats:
+    """Cumulative statistics for one or more ZST reads."""
+
+    lines_read: int = 0
+    decoded_records: int = 0
+    malformed_lines: int = 0
+    matched_records: int = 0
+    batches_yielded: int = 0
 
 
 class _ByteTracker:
@@ -34,47 +51,19 @@ class _ByteTracker:
         return self.fh.tell()
 
 
-def read_zst(
+def iter_zst(
     file_path: str | Path,
     columns: list[str] | None = None,
     max_lines: int | None = None,
     progress: bool = True,
     estimate_progress: bool = True,
+    record_filter: RecordFilter | None = None,
+    stats: ReadStats | None = None,
     **filters: Any,
-) -> pd.DataFrame:
-    """
-    Read a Reddit ZST dump file into a pandas DataFrame.
-
-    Parameters
-    ----------
-    file_path : str or Path
-        Path to the .zst file.
-    columns : list of str, optional
-        Columns to include in the output DataFrame. If None, includes all columns.
-    max_lines : int, optional
-        Maximum number of lines to read. Useful for sampling or testing.
-    progress : bool, default True
-        Show a progress bar while reading.
-    estimate_progress : bool, default True
-        If True, estimate progress based on compressed file size (shows percentage
-        and ETA). If False, show only lines read and rate.
-    **filters : keyword arguments
-        Filter records by field values. For example, `subreddit="AmItheAsshole"`
-        will only include records where the subreddit field equals "AmItheAsshole".
-
-    Returns
-    -------
-    pd.DataFrame
-        DataFrame containing the Reddit data.
-
-    Examples
-    --------
-    >>> df = read_zst("RC_2024-01.zst")
-    >>> df = read_zst("RC_2024-01.zst", subreddit="science", max_lines=10000)
-    >>> df = read_zst("RS_2024-01.zst", columns=["title", "author", "score"])
-    """
+) -> Iterator[Record]:
+    """Stream matching records from a Reddit ZST dump file."""
     file_path = Path(file_path)
-    matched = []
+    read_stats = stats if stats is not None else ReadStats()
 
     with open(file_path, "rb") as fh:
         # Optionally wrap file handle to track bytes for progress estimation
@@ -107,38 +96,112 @@ def read_zst(
                     disable=not progress,
                 )
 
-            last_bytes = 0
-            for i, line in enumerate(text_stream):
-                if max_lines is not None and i >= max_lines:
-                    break
+            try:
+                last_bytes = 0
+                for i, line in enumerate(text_stream):
+                    if max_lines is not None and i >= max_lines:
+                        break
 
-                # Update progress based on compressed bytes or line count
-                if estimate_progress:
-                    pbar.update(tracker.bytes_read - last_bytes)
-                    last_bytes = tracker.bytes_read
-                else:
-                    pbar.update(1)
+                    read_stats.lines_read += 1
 
-                try:
-                    item = json.loads(line)
-                except json.JSONDecodeError:
-                    # Skip malformed lines rather than failing entirely
-                    continue
+                    # Update progress based on compressed bytes or line count
+                    if estimate_progress:
+                        pbar.update(tracker.bytes_read - last_bytes)
+                        last_bytes = tracker.bytes_read
+                    else:
+                        pbar.update(1)
 
-                if filters:
-                    if not _matches_filters(item, filters):
+                    try:
+                        item = json.loads(line)
+                    except json.JSONDecodeError:
+                        read_stats.malformed_lines += 1
                         continue
 
-                if columns is not None:
-                    # Extract only requested columns; missing keys become None
-                    item = {k: item.get(k) for k in columns}
+                    read_stats.decoded_records += 1
 
-                matched.append(item)
-                pbar.set_postfix(hits=len(matched))
+                    if filters and not _matches_filters(item, filters):
+                        continue
 
-            pbar.close()
+                    if record_filter is not None and not record_filter(item):
+                        continue
 
-    return pd.DataFrame(matched)
+                    read_stats.matched_records += 1
+
+                    if columns is not None:
+                        # Extract only requested columns; missing keys become None
+                        item = {key: item.get(key) for key in columns}
+
+                    pbar.set_postfix(hits=read_stats.matched_records)
+                    yield item
+            finally:
+                pbar.close()
+
+
+def read_zst_batches(
+    file_path: str | Path,
+    columns: list[str] | None = None,
+    batch_size: int = 100_000,
+    max_lines: int | None = None,
+    progress: bool = True,
+    estimate_progress: bool = True,
+    record_filter: RecordFilter | None = None,
+    stats: ReadStats | None = None,
+    **filters: Any,
+) -> Iterator[pd.DataFrame]:
+    """Yield matching records as bounded pandas DataFrames."""
+    if batch_size <= 0:
+        raise ValueError("batch_size must be greater than zero")
+
+    read_stats = stats if stats is not None else ReadStats()
+    batch: list[Record] = []
+
+    for item in iter_zst(
+        file_path=file_path,
+        columns=columns,
+        max_lines=max_lines,
+        progress=progress,
+        estimate_progress=estimate_progress,
+        record_filter=record_filter,
+        stats=read_stats,
+        **filters,
+    ):
+        batch.append(item)
+        if len(batch) == batch_size:
+            read_stats.batches_yielded += 1
+            yield pd.DataFrame(batch)
+            batch = []
+
+    if batch:
+        read_stats.batches_yielded += 1
+        yield pd.DataFrame(batch)
+
+
+def read_zst(
+    file_path: str | Path,
+    columns: list[str] | None = None,
+    max_lines: int | None = None,
+    progress: bool = True,
+    estimate_progress: bool = True,
+    **filters: Any,
+) -> pd.DataFrame:
+    """
+    Read a Reddit ZST dump file into a pandas DataFrame.
+
+    This compatibility API collects all matching records in memory. Use
+    ``iter_zst`` or ``read_zst_batches`` for bounded-memory processing.
+    """
+    return pd.DataFrame(
+        list(
+            iter_zst(
+                file_path=file_path,
+                columns=columns,
+                max_lines=max_lines,
+                progress=progress,
+                estimate_progress=estimate_progress,
+                **filters,
+            )
+        )
+    )
 
 
 def _matches_filters(item: dict, filters: dict[str, Any]) -> bool:

@@ -44,6 +44,39 @@ df = rd.read_zst(
 )
 ```
 
+### Stream records with bounded memory
+
+Use `iter_zst` when you want one decoded record at a time:
+
+```python
+for record in rd.iter_zst("RC_2024-01.zst", subreddit="science"):
+    process(record)
+```
+
+Use `read_zst_batches` to receive bounded pandas DataFrames. Exact filters and
+the optional predicate run before records enter a batch.
+
+```python
+start_utc = 1704067200
+end_utc = 1706745600
+stats = rd.ReadStats()
+
+for batch in rd.read_zst_batches(
+    "RC_2024-01.zst",
+    subreddit="science",
+    record_filter=lambda record: (
+        start_utc <= int(record["created_utc"]) < end_utc
+    ),
+    batch_size=100_000,
+    stats=stats,
+):
+    process(batch)
+
+print(stats)
+```
+
+`read_zst` remains available when the complete result fits in memory.
+
 ### Inspect file schema
 
 ```python
